@@ -583,7 +583,7 @@ function readV4a(lines: string[]): Edit[] {
     if (line.startsWith('*** Add File: ')) {
       const path = line.slice('*** Add File: '.length).trim();
       const end = vSectionEnd(lines, i + 1, last);
-      edits.push(vAddEdit(path, lines.slice(i + 1, end), i + 1));
+      edits.push(vAddEdit(path, lines.slice(i + 1, end), i + 2));
       i = end;
       continue;
     }
@@ -598,7 +598,7 @@ function readV4a(lines: string[]): Edit[] {
     if (line.startsWith('*** Update File: ')) {
       const path = line.slice('*** Update File: '.length).trim();
       const end = vSectionEnd(lines, i + 1, last);
-      edits.push(vUpdateEdit(path, lines.slice(i + 1, end), i + 1));
+      edits.push(vUpdateEdit(path, lines.slice(i + 1, end), i + 2, i + 1));
       i = end;
       continue;
     }
