@@ -188,6 +188,7 @@ interface USection {
   create: boolean;
   del: boolean;
   renamed: boolean;
+  pairSeen: boolean;
   hunks: UHunk[];
 }
 interface UHunk {
@@ -229,13 +230,13 @@ function readUnified(lines: string[]): Edit[] {
     if (line.startsWith('diff --git ')) {
       const m = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
       if (m === null) throw new Exit2(`error: parse ${i + 1}`);
-      const sec: USection = { oldPath: m[1]!, newPath: m[2]!, create: false, del: false, renamed: false, hunks: [] };
+      const sec: USection = { oldPath: m[1]!, newPath: m[2]!, create: false, del: false, renamed: false, pairSeen: false, hunks: [] };
       sections.push(sec);
       i = readUSection(lines, i + 1, sec);
       continue;
     }
     if (line.startsWith('--- ') && (lines[i + 1] ?? '').startsWith('+++ ')) {
-      const sec: USection = { oldPath: uPath(line), newPath: uPath(lines[i + 1]!), create: false, del: false, renamed: false, hunks: [] };
+      const sec: USection = { oldPath: uPath(line), newPath: uPath(lines[i + 1]!), create: false, del: false, renamed: false, pairSeen: true, hunks: [] };
       sections.push(sec);
       i = readUSection(lines, i + 2, sec);
       continue;
@@ -250,7 +251,19 @@ function readUSection(lines: string[], i: number, sec: USection): number {
   while (i < lines.length) {
     const line = lines[i]!;
     if (line.startsWith('diff --git ')) return i;
-    if (line.startsWith('--- ') && (lines[i + 1] ?? '').startsWith('+++ ')) return i;
+    if (line.startsWith('--- ')) {
+      if ((lines[i + 1] ?? '').startsWith('+++ ')) {
+        if (!header || sec.pairSeen) return i;
+        sec.oldPath = uPath(line);
+        sec.newPath = uPath(lines[i + 1]!);
+        sec.pairSeen = true;
+        i += 2;
+        continue;
+      }
+      if (header) throw new Exit2(`error: parse ${i + 2}`);
+      i += 1;
+      continue;
+    }
     if (line.startsWith('@@')) {
       const m = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/.exec(line);
       if (m === null) throw new Exit2(`error: parse ${i + 1}`);
@@ -259,6 +272,8 @@ function readUSection(lines: string[], i: number, sec: USection): number {
       const body: UBodyLine[] = [];
       while (i < lines.length) {
         const b = lines[i]!;
+        if (b.startsWith('diff --git ')) break;
+        if (b.startsWith('--- ') && (lines[i + 1] ?? '').startsWith('+++ ')) break;
         const c = b[0];
         if (c === ' ') body.push({ kind: ' ', text: b.slice(1) });
         else if (c === '-') body.push({ kind: '-', text: b.slice(1) });
@@ -274,7 +289,6 @@ function readUSection(lines: string[], i: number, sec: USection): number {
       continue;
     }
     if (header) {
-      if (line.startsWith('--- ')) throw new Exit2(`error: parse ${i + 2}`);
       if (line.startsWith('+++ ')) sec.newPath = uPath(line);
       else if (line.startsWith('rename from ')) { sec.oldPath = line.slice('rename from '.length); sec.renamed = true; }
       else if (line.startsWith('rename to ')) { sec.newPath = line.slice('rename to '.length); sec.renamed = true; }
