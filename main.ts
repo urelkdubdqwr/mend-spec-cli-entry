@@ -46,6 +46,7 @@ function safe(p: string): boolean {
 class Tree {
   private readonly orig = new Map<string, string | null>();
   readonly now = new Map<string, string | null>();
+  readonly moves: { from: string; to: string }[] = [];
   original(p: string): string | null {
     if (!this.orig.has(p)) {
       let v: string | null = null;
@@ -379,6 +380,7 @@ function usectionEdit(sec: USection): Edit {
     const out = uApplyHunks(fl, sec.hunks, strictFlag, oldP);
     tree.now.set(oldP, null);
     tree.now.set(newP, joinFile(out.lines, fl.br, out.final));
+    tree.moves.push({ from: oldP, to: newP });
   };
 }
 
@@ -723,6 +725,7 @@ function vUpdateApply(tree: Tree, path: string, moveTo: string | null, chunks: V
   if (moveTo !== null) {
     tree.now.set(path, null);
     tree.now.set(moveTo, out);
+    tree.moves.push({ from: path, to: moveTo });
   } else {
     tree.now.set(path, out);
   }
@@ -781,20 +784,39 @@ function run(args: string[]): { code: number; out: string[] } {
     }
   }
   if (fails.length > 0) return { code: 1, out: [...fails.map((f) => `error: ${f.code} ${f.path}`), `failed: ${fails.length} of ${edits.length} edits`] };
-  const rows: string[] = [];
+  const rows: { key: string; text: string; path: string; now: string | null }[] = [];
+  const movedFrom = new Set<string>();
+  const movedTo = new Set<string>();
+  for (const mv of tree.moves) {
+    const wasOld = tree.original(mv.from);
+    const wasNew = tree.original(mv.to);
+    const nowOld = tree.get(mv.from);
+    const nowNew = tree.get(mv.to);
+    if (wasOld !== null && nowOld === null && wasNew === null && nowNew !== null && !movedFrom.has(mv.from) && !movedTo.has(mv.to)) {
+      movedFrom.add(mv.from);
+      movedTo.add(mv.to);
+      rows.push({ key: mv.to, text: `R ${mv.from} -> ${mv.to}`, path: mv.to, now: nowNew });
+    }
+  }
   for (const p of [...tree.now.keys()].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))) {
+    if (movedFrom.has(p) || movedTo.has(p)) continue;
     const was = tree.original(p);
     const now = tree.now.get(p)!;
     if (was === now) continue;
-    rows.push(`${was === null ? 'A' : now === null ? 'D' : 'M'} ${p}`);
-    if (check) continue;
-    if (now === null) rmSync(p, { force: true });
-    else {
-      mkdirSync(dirname(p), { recursive: true });
-      writeFileSync(p, now);
-    }
+    rows.push({ key: p, text: `${was === null ? 'A' : now === null ? 'D' : 'M'} ${p}`, path: p, now });
   }
-  return { code: 0, out: [...rows, `ok: ${rows.length} ${rows.length === 1 ? 'file' : 'files'}`] };
+  rows.sort((a, b) => Buffer.compare(Buffer.from(a.key), Buffer.from(b.key)));
+  if (!check) {
+    for (const r of rows) {
+      if (r.now === null) rmSync(r.path, { force: true });
+      else {
+        mkdirSync(dirname(r.path), { recursive: true });
+        writeFileSync(r.path, r.now);
+      }
+    }
+    for (const p of movedFrom) if (!movedTo.has(p)) rmSync(p, { force: true });
+  }
+  return { code: 0, out: [...rows.map((r) => r.text), `ok: ${rows.length} ${rows.length === 1 ? 'file' : 'files'}`] };
 }
 
 const trialEnv = process.env.MAKEFUN_ENV_URL;
